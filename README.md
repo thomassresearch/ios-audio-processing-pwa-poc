@@ -51,13 +51,13 @@ Requires Node 24 (Node 22 also works locally). No runtime npm/CDN dependencies.
 npm ci
 npm test                       # build WASM and static site; DSP / scheduling tests
 npx playwright install --with-deps chromium webkit
-npm run test:browser            # Chromium fake mic + real shader; mobile WebKit shell/offline
+npm run test:browser            # Chromium fake mic + real shader; mobile WebKit shell/cache
 npm run dev                    # http://localhost:4173/ios-audio-processing-pwa-poc/
 ```
 
 Localhost is a secure context on the development computer. Opening a plain HTTP LAN IP on an iPhone is not; use HTTPS or the deployed Pages site.
 
-Tests cover WASM dry gain, independent channels, reference wet impulse response through history wrap, bounded output at several sample rates, mono diagnostics before duplication, fixed GPU playback deadlines, late-result rejection and bounded in-flight jobs. Browser tests cover static hosting under the repository subpath, offline service-worker caching, capture lifecycle, permission denial and actual WebGPU shader dispatch/readback on Chromium's software GPU. Linux WebKit with an iPhone viewport checks the shell and offline behavior; it does not replace physical iPhone testing.
+Tests cover WASM dry gain, independent channels, reference wet impulse response through history wrap, bounded output at several sample rates, mono diagnostics before duplication, fixed GPU playback deadlines, late-result rejection and bounded in-flight jobs. Browser tests cover static hosting under the repository subpath, offline service-worker caching, capture lifecycle, permission denial and actual WebGPU shader dispatch/readback on Chromium's software GPU. Linux WebKit with an iPhone viewport checks the shell, responsive layout, cache installation and reload. Its automation offline toggle aborts service-worker navigation with an internal WebKit error, so actual offline reload is exercised in Chromium. This does not replace physical iPhone testing.
 
 ## Publish a release
 

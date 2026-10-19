@@ -10,11 +10,24 @@ test('mobile layout, PWA cache and navigation work under the Pages subpath', asy
     if (!navigator.serviceWorker.controller) await new Promise(resolve => navigator.serviceWorker.addEventListener('controllerchange', resolve, { once: true }));
   });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBeTruthy();
-  await context.setOffline(true);
-  await page.reload();
-  await expect(page.locator('#start')).toBeVisible();
-  expect(await page.evaluate(async () => (await fetch('./reverb.wasm')).ok)).toBeTruthy();
-  await context.setOffline(false);
+  // WebKit's automation offline toggle aborts SW-controlled navigations internally.
+  // Verify its installed cache directly; exercise a real offline reload in Chromium.
+  const cached = await page.evaluate(async () => {
+    const names = await caches.keys();
+    const cache = await caches.open(names.find(name => name.startsWith('audio-lab-')));
+    return Promise.all(['index.html', 'reverb.wasm', 'src/audio-worklet.js', 'src/gpu-worker.js'].map(async asset => !!(await cache.match(new URL(asset, location.href)))));
+  });
+  expect(cached).toEqual([true, true, true, true]);
+  if (info.project.name === 'chromium') {
+    await context.setOffline(true);
+    await page.reload();
+    await expect(page.locator('#start')).toBeVisible();
+    expect(await page.evaluate(async () => (await fetch('./reverb.wasm')).ok)).toBeTruthy();
+    await context.setOffline(false);
+  } else {
+    await page.reload();
+    await expect(page.locator('#start')).toBeVisible();
+  }
   await page.screenshot({ path: `test-results/${info.project.name}-app.png`, fullPage: true });
   expect(errors).toEqual([]);
 });

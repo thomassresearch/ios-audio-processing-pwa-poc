@@ -1,0 +1,62 @@
+name: Publish v0.1.0 (temporary)
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/publish-v0.1.0.yml']
+permissions:
+  contents: read
+concurrency:
+  group: github-pages
+  cancel-in-progress: false
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ce0190ce68a6d8451e601e0a3eebbe22a9582264
+      - name: Push the explicitly requested release tag
+        run: |
+          expected=ce0190ce68a6d8451e601e0a3eebbe22a9582264
+          existing=$(git ls-remote --tags origin refs/tags/v0.1.0 | cut -f1)
+          if [ -z "$existing" ]; then
+            git tag v0.1.0 "$expected"
+            git push origin refs/tags/v0.1.0
+          elif [ "$existing" != "$expected" ]; then
+            echo "Refusing to change an existing tag"
+            exit 1
+          fi
+  # Token-generated tag pushes do not trigger workflows; deploy here for this release.
+  build:
+    needs: tag
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: refs/tags/v0.1.0
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npx playwright install --with-deps chromium webkit
+      - run: npm run test:browser
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: dist
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/configure-pages@v5
+      - id: deployment
+        uses: actions/deploy-pages@v4

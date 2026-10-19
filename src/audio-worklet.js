@@ -1,6 +1,9 @@
 import { configureWasm } from './dsp.js';
 
 class LiveProcessor extends AudioWorkletProcessor {
+  static get parameterDescriptors() {
+    return [{ name: 'wet', defaultValue: 0.35, minValue: 0, maxValue: 1, automationRate: 'k-rate' }];
+  }
   constructor({ processorOptions: o }) {
     super();
     this.mode = o.mode;
@@ -8,6 +11,7 @@ class LiveProcessor extends AudioWorkletProcessor {
     this.gain = o.gain;
     this.targetWet = o.wet;
     this.targetGain = o.gain;
+    this.routing = o.routing || 'preserve';
     this.frame = 0;
     this.batch = o.batch;
     this.delay = this.batch * 3;
@@ -35,6 +39,7 @@ class LiveProcessor extends AudioWorkletProcessor {
       if (data.type === 'params') {
         this.targetWet = data.wet;
         this.targetGain = data.gain;
+        if (data.routing) this.routing = data.routing;
       }
       if (data.type === 'gpu-port') {
         this.gpu = data.port;
@@ -56,20 +61,26 @@ class LiveProcessor extends AudioWorkletProcessor {
   resetMeters() {
     this.ll = 0; this.rr = 0; this.lr = 0; this.diff = 0; this.count = 0;
   }
-  process(inputs, outputs) {
+  process(inputs, outputs, parameters = {}) {
     const input = inputs[0];
     const output = outputs[0];
     const n = output[0].length;
     if (!input?.length) return true;
-    const l = input[0];
-    const r = input[1] || l;
+    const rawL = input[0];
+    const rawR = input[1];
+    // Analyse what capture actually supplied, before any monitoring duplication.
+    for (let i = 0; i < n; i++) {
+      const l = rawL[i], r = rawR ? rawR[i] : 0;
+      this.ll += l * l; this.rr += r * r;
+      this.lr += l * r; this.diff += (l - r) ** 2;
+    }
+    let l = rawL, r = rawR || rawL;
+    if (this.routing === 'left') r = l;
+    if (this.routing === 'right') l = r;
+    this.targetWet = parameters.wet?.[0] ?? this.targetWet;
     // Smooth UI changes over several render quanta to reduce zipper noise.
     this.wet += (this.targetWet - this.wet) * 0.1;
     this.gain += (this.targetGain - this.gain) * 0.1;
-    for (let i = 0; i < n; i++) {
-      this.ll += l[i] * l[i]; this.rr += r[i] * r[i];
-      this.lr += l[i] * r[i]; this.diff += (l[i] - r[i]) ** 2;
-    }
     this.count += n;
     if (this.mode === 'wasm') {
       if (n > 512) { this.port.postMessage({ type: 'error', message: 'Unsupported audio render block size.' }); return false; }
@@ -107,7 +118,7 @@ class LiveProcessor extends AudioWorkletProcessor {
     }
     this.frame += n;
     if (this.count >= sampleRate / 5) {
-      this.port.postMessage({ type: 'stats', channels: input.length, renderFrames: n,
+      this.port.postMessage({ type: 'stats', channels: input.length, renderFrames: n, wet: this.wet, routing: this.routing,
         rmsL: Math.sqrt(this.ll / this.count), rmsR: Math.sqrt(this.rr / this.count),
         correlation: this.ll * this.rr > 1e-16 ? this.lr / Math.sqrt(this.ll * this.rr) : null,
         difference: this.ll + this.rr > 1e-16 ? Math.sqrt(this.diff / (this.ll + this.rr)) : null,

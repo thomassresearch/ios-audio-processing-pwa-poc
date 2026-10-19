@@ -4,6 +4,18 @@ A static, installable PWA that captures microphone audio, diagnoses the stream's
 
 **Published URL:** https://thomassresearch.github.io/ios-audio-processing-pwa-poc/
 
+## Control and channel diagnostics (0.1.1)
+
+Output level and Mute output use a native GainNode after either DSP engine. Reverb mix is a k-rate AudioParam on the worklet, rather than relying exclusively on MessagePort control messages. The UI displays applied mix/level and an analyser meter after final gain. At 0% level or Mute, the app output must go silent even while raw input meters remain active. Audio heard then can include direct acoustic sound or another device/system monitoring path; the app cannot identify that external source. The output analyser is a downmix of the output channels, so opposite-phase stereo can cancel in its reading.
+
+Raw mono input shows activity only on the left input meter; it is duplicated to both ears for monitoring. A two-channel stream with a silent right side is explicitly identified instead of being called stereo. The Monitor channels selector can copy the left or right input to both ears, while the input diagnostics continue to reflect the unmodified capture stream. No physical microphone mapping is inferred.
+
+Play test chimes temporarily replaces the microphone source with three repeatable short chimes through the same DSP, level and output path. It restores microphone monitoring afterwards. Use it to compare 0% versus 100% reverb independently of direct acoustic self-hearing.
+
+Browser regression tests use a known synthetic microphone signal and assert actual post-gain output RMS while changing level, mute and reverb for both engines. These include a WASM test in mobile WebKit on CI; real iPhone routing still requires device testing.
+
+When updating from 0.1.0, allow the new service worker to download, close all Safari/PWA windows for this app and reopen. Check that the footer shows **0.1.1**. An old open window keeps the old release cache active.
+
 ## Run on iPhone
 
 1. Open the published HTTPS URL in Safari. Optionally use **Share → Add to Home Screen**.
@@ -27,7 +39,7 @@ The UI does **not** assume stereo because the phone has several microphones. Ste
 
 The audio context requests 48 kHz and interactive latency; actual rate is reported. The audio thread uses the input's actual channel count (`channelCountMode: max`, `channelInterpretation: discrete`) before any output duplication. AGC, noise suppression and echo cancellation are requested off, and actual track settings/capabilities are included in diagnostics where exposed. Browser/OS processing cannot be assumed to be bypassed.
 
-The GPU worker owns its adapter/device, persistent history and storage buffers, compute pipeline and readback buffer. Audio uses ordinary MessagePorts, so no COOP/COEP headers or SharedArrayBuffer are required on GitHub Pages. The audio thread never waits for the GPU. It has a fixed playback timeline, bounds outstanding jobs, drops late results, counts missed output render quanta, and outputs silence for missed GPU blocks. Startup preroll is not counted as an underrun. Changing mix/level is smoothed per render quantum. Output is clamped to [-1, 1].
+The GPU worker owns its adapter/device, persistent history and storage buffers, compute pipeline and readback buffer. Audio uses ordinary MessagePorts, so no COOP/COEP headers or SharedArrayBuffer are required on GitHub Pages. The audio thread never waits for the GPU. It has a fixed playback timeline, bounds outstanding jobs, drops late results, counts missed output render quanta, and outputs silence for missed GPU blocks. Startup preroll is not counted as an underrun. Reverb mix is smoothed per render quantum; final level is smoothed by native Web Audio automation. Output is clamped to [-1, 1].
 
 A small FIR can be faster and have less latency in WASM than on the GPU. GPU submission, messages and readback have overhead. The PoC measures whether the GPU path meets its deadlines; it does not claim GPU acceleration always helps. GPU failures are shown explicitly; stop and select WASM rather than silently switching engines.
 

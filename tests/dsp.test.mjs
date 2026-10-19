@@ -77,3 +77,32 @@ test('GPU worklet plays returned stereo at its declared three-block deadline', (
   const [a,b] = quantum(p, l);
   assert.equal(a[0], .25); assert.equal(b[0], -.5); assert.equal(p.underruns, 0);
 });
+
+test('mono capture has no invented right input while monitoring remains dual mono', () => {
+  const p = worklet('wasm');
+  const l = new Float32Array(128).fill(.2);
+  for (let i = 0; i < 80; i++) quantum(p, l);
+  const stats = p.port.sent.find(s => s.type === 'stats');
+  assert.equal(stats.channels, 1); assert.equal(stats.rmsR, 0);
+});
+
+test('left-only padded stereo can be centred without changing capture diagnostics', () => {
+  const p = worklet('wasm');
+  p.port.onmessage({ data: { type: 'params', wet: 0, gain: 1, routing: 'left' } });
+  const l = new Float32Array(128).fill(.2), r = new Float32Array(128);
+  for (let i = 0; i < 80; i++) {
+    const [a,b] = quantum(p,l,r); assert.equal(a[0], b[0]); assert.ok(a[0] > .19);
+  }
+  const stats = p.port.sent.find(s => s.type === 'stats');
+  assert.equal(stats.channels, 2); assert.equal(stats.rmsR, 0);
+});
+
+test('native wet AudioParam changes actual worklet output, independently of messages', () => {
+  const p = worklet('wasm');
+  const l = new Float32Array(128).fill(.2);
+  quantum(p,l);
+  const output = [[new Float32Array(128),new Float32Array(128)]];
+  p.process([[l]], output, { wet: new Float32Array([1]) });
+  assert.ok(output[0][0][0] < .19); assert.ok(output[0][0][0] > .17);
+  assert.ok(Math.abs(p.wet - .1) < 1e-6);
+});

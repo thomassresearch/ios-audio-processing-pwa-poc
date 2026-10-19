@@ -21,17 +21,19 @@
       <label>Microphone<select id="device"><option value="">System default · permission needed for names</option></select></label>
       <label>Channel request<select id="channels"><option value="prefer">Prefer stereo · allow mono</option><option value="strict">Require exactly 2 channels</option></select></label>
       <label id="batch-label" hidden>GPU block size<select id="batch"><option value="512">512 frames · less buffering</option><option value="1024" selected>1024 frames · balanced</option><option value="2048">2048 frames · more buffering</option></select></label>
+      <label>Monitor channels<select id="routing"><option value="preserve">Preserve input · duplicate mono</option><option value="left">Left input → both ears</option><option value="right">Right input → both ears</option></select></label>
     </div>
     <div class="sliders"><label>Reverb mix <output id="wet-value">35%</output><input id="wet" type="range" min="0" max="100" value="35"></label><label>Output level <output id="gain-value">20%</output><input id="gain" type="range" min="0" max="100" value="20"></label></div>
-    <div class="actions"><button id="start" class="primary">Start listening <span aria-hidden="true">↗</span></button><button id="stop" disabled>Stop</button><button id="resume" hidden>Resume audio</button></div>
+    <div class="actions"><button id="start" class="primary">Start listening <span aria-hidden="true">↗</span></button><button id="stop" disabled>Stop</button><button id="resume" hidden>Resume audio</button><button id="mute" disabled aria-pressed="false">Mute output</button><button id="test-tone" disabled>Play test chimes</button></div>
+    <div class="output-monitor"><label>OUTPUT AFTER LEVEL / MUTE <meter id="meter-out" min="0" max="1" value="0"></meter><span id="db-out">−∞ dBFS</span></label><p class="hint">Applied reverb: <strong id="applied-wet">—</strong> · Applied level: <strong id="applied-gain">—</strong>. At 0% level or Mute output, this meter should go silent. Sound still audible then is outside this app’s output path. Test chimes temporarily replace the mic and go through the same effect.</p></div>
     <p id="message" class="message" role="status">Allow microphone access when prompted. Keep the app in the foreground.</p>
   </section>
   <section class="diagnostics card" aria-labelledby="capture-title">
-    <div class="section-heading"><h2 id="capture-title">What comes in?</h2><span class="pill">BEFORE THE EFFECT</span></div>
+    <div class="section-heading"><h2 id="capture-title">What comes in?</h2><span id="input-source" class="pill">BEFORE THE EFFECT</span></div>
     <div class="meters"><label>LEFT <meter id="meter-l" min="0" max="1" value="0"></meter><span id="db-l">−∞ dBFS</span></label><label>RIGHT <meter id="meter-r" min="0" max="1" value="0"></meter><span id="db-r">−∞ dBFS</span></label></div>
     <p id="stereo" class="verdict">Start a session to inspect the microphone signal.</p>
     <dl class="stats"><div><dt>Track reports</dt><dd id="track-channels">—</dd></div><div><dt>Audio thread receives</dt><dd id="actual-channels">—</dd></div><div><dt>L/R correlation</dt><dd id="correlation">—</dd></div><div><dt>L/R difference</dt><dd id="difference">—</dd></div></dl>
-    <p class="hint">Move a sound around the phone and compare L/R. Two different channels indicate a stereo stream, but cannot prove access to two particular physical microphones. Mono is duplicated only after these measurements.</p>
+    <p class="hint">Move a sound around the phone and compare L/R. A silent second channel is not evidence of stereo. Raw mono has no right input; duplication or left/right routing happens only after these measurements. Two active channels cannot prove access to two particular physical microphones.</p>
   </section>
   <section class="card" aria-labelledby="performance-title">
     <div class="section-heading"><h2 id="performance-title">How fast does it run?</h2><span id="active-engine" class="pill">NO ENGINE RUNNING</span></div>

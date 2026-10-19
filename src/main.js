@@ -23,6 +23,8 @@ function status(text, kind = '') { $('status').textContent = text; $('status').c
 function controls() {
   $('start').disabled = starting || !!session;
   $('stop').disabled = !starting && !session;
+  $('mute').disabled = !session?.monitorGain;
+  $('test-tone').disabled = !session?.node || !!session?.testSource;
   for (const id of ['engine', 'device', 'channels', 'batch']) $(id).disabled = starting || !!session;
 }
 function timeout(promise, ms, label) {
@@ -49,10 +51,49 @@ async function listDevices() {
   for (const [i, d] of devices.entries()) if (d.deviceId) $('device').add(new Option(d.label || `Microphone ${i + 1}`, d.deviceId));
   if (devices.some(d => d.deviceId === chosen)) $('device').value = chosen;
 }
-function params() { return { type: 'params', wet: +$('wet').value / 100, gain: +$('gain').value / 100 }; }
-for (const id of ['wet', 'gain']) $(id).addEventListener('input', () => {
-  $(`${id}-value`).value = `${$(id).value}%`;
-  session?.node?.port.postMessage(params());
+function params() { return { type: 'params', wet: +$('wet').value / 100, gain: 1, routing: $('routing').value }; }
+function applyControls() {
+  for (const id of ['wet', 'gain']) $(`${id}-value`).value = `${$(id).value}%`;
+  const s = session;
+  if (!s?.node || !s.monitorGain) return;
+  const time = s.context.currentTime;
+  const wet = s.node.parameters.get('wet');
+  wet.cancelScheduledValues(time);
+  wet.setTargetAtTime(+$('wet').value / 100, time, 0.01);
+  const level = s.monitorGain.gain;
+  level.cancelScheduledValues(time);
+  level.setTargetAtTime(s.muted ? 0 : +$('gain').value / 100, time, 0.01);
+  s.node.port.postMessage(params());
+}
+for (const id of ['wet', 'gain', 'routing']) for (const event of ['input', 'change']) $(id).addEventListener(event, applyControls);
+$('mute').addEventListener('click', () => {
+  if (!session) return;
+  session.muted = !session.muted;
+  $('mute').textContent = session.muted ? 'Unmute output' : 'Mute output';
+  $('mute').setAttribute('aria-pressed', String(session.muted));
+  applyControls();
+});
+$('test-tone').addEventListener('click', () => {
+  const s = session;
+  if (!s?.source || s.testSource) return;
+  // Replace the microphone with repeatable short chimes through the SAME DSP/output chain.
+  const rate = s.context.sampleRate;
+  const buffer = s.context.createBuffer(1, Math.round(rate * 2.5), rate);
+  const samples = buffer.getChannelData(0);
+  for (const time of [0, 0.75, 1.5]) for (let n = 0; n < rate * 0.06; n++) {
+    const t = n / rate;
+    samples[Math.round(time * rate) + n] = 0.5 * Math.sin(2 * Math.PI * 660 * t) * Math.sin(Math.PI * t / 0.06) ** 2;
+  }
+  const source = s.context.createBufferSource(); source.buffer = buffer;
+  s.source.disconnect(); source.connect(s.node); s.testSource = source;
+  $('test-tone').textContent = 'Test chimes playing…'; controls();
+  source.onended = () => {
+    source.disconnect();
+    if (session !== s) return;
+    s.testSource = null; s.source.connect(s.node);
+    $('test-tone').textContent = 'Play test chimes'; controls();
+  };
+  source.start();
 });
 $('engine').addEventListener('change', () => { $('batch-label').hidden = $('engine').value !== 'gpu'; });
 
@@ -108,6 +149,7 @@ async function start() {
     s.node = new AudioWorkletNode(s.context, 'live-processor', {
       numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2],
       channelCount: 2, channelCountMode: 'max', channelInterpretation: 'discrete',
+      parameterData: { wet: +$('wet').value / 100 },
       processorOptions: { mode, module, batch, ...params() },
     });
     const nodeReady = waitReady(s.node.port, 'Audio processor');
@@ -133,7 +175,14 @@ async function start() {
     s.source = s.context.createMediaStreamSource(stream);
     s.source.channelInterpretation = 'discrete';
     s.source.connect(s.node);
-    s.node.connect(s.context.destination);
+    // Native final gain guarantees the level/mute affect both DSP engines.
+    s.monitorGain = s.context.createGain();
+    s.monitorGain.gain.value = +$('gain').value / 100;
+    s.analyser = s.context.createAnalyser(); s.analyser.fftSize = 2048;
+    s.outputSamples = new Float32Array(s.analyser.fftSize);
+    s.node.connect(s.monitorGain); s.monitorGain.connect(s.analyser);
+    s.analyser.connect(s.context.destination);
+    applyControls();
     s.context.onstatechange = () => {
       if (session !== s) return;
       log(`Audio context: ${s.context.state}`);
@@ -168,7 +217,9 @@ async function stop(reason = 'Session stopped. You can change the engine or micr
   starting = false;
   const s = session;
   session = null;
+  if (s?.testSource) { s.testSource.onended = null; s.testSource.stop(); s.testSource.disconnect(); }
   s?.source?.disconnect();
+  s?.monitorGain?.disconnect(); s?.analyser?.disconnect();
   s?.node?.disconnect();
   s?.worker?.terminate();
   s?.stream?.getTracks().forEach(t => t.stop());
@@ -176,6 +227,9 @@ async function stop(reason = 'Session stopped. You can change the engine or micr
   if (s?.context) { s.context.onstatechange = null; await s.context.close().catch(() => {}); }
   if (navigator.audioSession && s?.previousAudioSession != null) navigator.audioSession.type = s.previousAudioSession;
   $('resume').hidden = true;
+  $('mute').textContent = 'Mute output'; $('mute').setAttribute('aria-pressed', 'false');
+  $('test-tone').textContent = 'Play test chimes';
+  $('meter-out').value = 0; $('db-out').textContent = '−∞ dBFS';
   $('meter-l').value = 0; $('meter-r').value = 0;
   status(error ? 'Error' : 'Stopped', error ? 'error' : '');
   message(reason + (updateWaiting ? ' An update is ready; close all app windows and reopen to load it.' : ''), error);
@@ -185,7 +239,18 @@ async function stop(reason = 'Session stopped. You can change the engine or micr
 const latency = seconds => Number.isFinite(seconds) && seconds > 0 ? `${(seconds * 1000).toFixed(1)} ms` : 'Not reported';
 const db = x => x > 0.000001 ? `${(20 * Math.log10(x)).toFixed(1)} dBFS` : '−∞ dBFS';
 function showStats(data, s) {
-  lastReport.latestStats = data;
+  let outputRms = 0;
+  if (s.analyser) {
+    s.analyser.getFloatTimeDomainData(s.outputSamples);
+    for (const x of s.outputSamples) outputRms += x * x;
+    outputRms = Math.sqrt(outputRms / s.outputSamples.length);
+  }
+  lastReport.latestStats = { ...data, outputRms, outputGain: s.monitorGain?.gain.value, muted: !!s.muted,
+    inputSource: s.testSource ? 'test chimes' : 'microphone' };
+  $('meter-out').value = Math.min(1, outputRms * 4); $('db-out').textContent = db(outputRms);
+  $('applied-wet').textContent = `${Math.round(data.wet * 100)}%`;
+  $('applied-gain').textContent = `${Math.round((s.monitorGain?.gain.value || 0) * 100)}%`;
+  $('input-source').textContent = s.testSource ? 'TEST CHIMES · MIC TEMPORARILY REPLACED' : 'BEFORE THE EFFECT';
   $('meter-l').value = Math.min(1, data.rmsL * 4); $('meter-r').value = Math.min(1, data.rmsR * 4);
   $('db-l').textContent = db(data.rmsL); $('db-r').textContent = data.channels > 1 ? db(data.rmsR) : 'Mono input';
   $('actual-channels').textContent = `${data.channels} ch`;
@@ -193,8 +258,11 @@ function showStats(data, s) {
   $('difference').textContent = data.channels < 2 || data.difference === null ? '—' : data.difference.toFixed(5);
   $('stereo').textContent = data.channels < 2 ? 'Mono capture. iOS supplied one channel; output is duplicated to both ears.'
     : data.rmsL < 0.0001 && data.rmsR < 0.0001 ? 'Two channels delivered. Make a sound to check whether they differ.'
+    : data.rmsR < 0.0001 && data.rmsL >= 0.0001 ? 'Two channels supplied, but only the left carries a signal. This does not establish stereo capture. Select Left input → both ears to centre monitoring.'
+    : data.rmsL < 0.0001 && data.rmsR >= 0.0001 ? 'Two channels supplied, but only the right carries a signal. Select Right input → both ears to centre monitoring.'
     : data.difference < 0.0001 ? 'Two channels delivered, but samples are effectively identical. This may be duplicated mono.'
-    : 'Two differing input channels detected. Move a sound around the phone to investigate the stereo image.';
+    : 'Two active, differing input channels detected. Move a sound around the phone to investigate the stereo image.';
+  if (s.testSource) $('stereo').textContent = 'Test chimes are replacing the microphone input. Compare 0% and 100% reverb, and try Mute output.';
   $('quantum').textContent = `${data.renderFrames} / ${(data.renderFrames / s.context.sampleRate * 1000).toFixed(2)} ms`;
   $('gpu-time').textContent = s.mode === 'gpu' ? `${data.gpuMs.toFixed(2)} ms` : 'Not used';
   $('underruns').textContent = data.underruns;

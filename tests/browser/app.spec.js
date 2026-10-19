@@ -117,3 +117,45 @@ test('actual GPU impulse response matches the WASM tap definition', async ({ pag
   expect(result.maxError).toBeLessThan(1e-6);
   expect(result.nonzero).toBe(32);
 });
+
+for (const engine of ['wasm', 'gpu']) test(`${engine}: sliders and mute change real output samples with synthetic microphone`, async ({ page }, info) => {
+  test.skip(engine === 'gpu' && info.project.name !== 'chromium', 'GPU is validated on Chromium software adapter.');
+  await page.addInitScript(() => {
+    const OriginalAudioContext = window.AudioContext;
+    window.AudioContext = class extends OriginalAudioContext {
+      constructor(options) { super(options); window.testAudioContext = this; }
+    };
+    navigator.mediaDevices.getUserMedia = async () => {
+      const ctx = window.testAudioContext;
+      const oscillator = ctx.createOscillator(); oscillator.frequency.value = 440;
+      const level = ctx.createGain(); level.gain.value = .2;
+      const microphone = ctx.createMediaStreamDestination(); microphone.channelCount = 1;
+      oscillator.connect(level); level.connect(microphone); oscillator.start();
+      return microphone.stream;
+    };
+  });
+  await page.goto('./'); await page.locator('#engine').selectOption(engine);
+  if (engine === 'gpu') await page.locator('#batch').selectOption('2048');
+  await page.locator('#start').click();
+  await expect(page.locator('#status')).toHaveText('Listening', { timeout: 20000 });
+  const stats = () => page.locator('#technical').textContent().then(t => JSON.parse(t).latestStats || {});
+  await page.locator('#wet').fill('0'); await page.locator('#gain').fill('100');
+  await expect.poll(async () => (await stats()).outputRms).toBeGreaterThan(.08);
+  await expect(page.locator('#applied-wet')).toHaveText('0%');
+  await page.locator('#gain').fill('0');
+  await expect.poll(async () => (await stats()).outputRms).toBeLessThan(1e-6);
+  expect((await stats()).rmsL).toBeGreaterThan(.08);
+  await page.locator('#gain').fill('100');
+  await expect.poll(async () => (await stats()).outputRms).toBeGreaterThan(.08);
+  await page.locator('#mute').click();
+  await expect.poll(async () => (await stats()).outputRms).toBeLessThan(1e-6);
+  await page.locator('#mute').click();
+  await expect.poll(async () => (await stats()).outputRms).toBeGreaterThan(.08);
+  await page.locator('#wet').fill('100');
+  await expect(page.locator('#applied-wet')).toHaveText('100%');
+  await expect.poll(async () => (await stats()).outputRms).toBeLessThan(.06);
+  await page.locator('#test-tone').click();
+  await expect(page.locator('#test-tone')).toHaveText('Test chimes playing…');
+  await expect(page.locator('#test-tone')).toHaveText('Play test chimes', { timeout: 10000 });
+  await page.locator('#stop').click();
+});
